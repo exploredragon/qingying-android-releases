@@ -1,0 +1,43 @@
+name: Complete photo recognition
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wethin-food-analysis
+  cancel-in-progress: false
+jobs:
+  complete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Recover and complete pending recognition
+        env:
+          REPORT_RUNNER_TOKEN: ${{ secrets.WETHIN_REPORT_RUNNER_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os, json, time, urllib.request, urllib.error
+          token = os.environ.get('REPORT_RUNNER_TOKEN', '')
+          if not token:
+              raise SystemExit('Maintenance secret is not configured')
+          url = 'https://qingying.nxl1551120624.chatgpt.site/api/internal/food-jobs'
+          deadline = time.monotonic() + 240
+          for batch in range(12):
+              request = urllib.request.Request(url, data=b'{}', headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json', 'User-Agent': 'WeThin-FoodScheduler/1.0'}, method='POST')
+              try:
+                  with urllib.request.urlopen(request, timeout=110) as response:
+                      result = json.load(response)
+              except (urllib.error.URLError, TimeoutError):
+                  raise SystemExit('Food maintenance request failed; task leases will be recovered on the next run')
+              counts = result.get('counts', {})
+              print('Recognition batch:', result.get('processed', 0), counts)
+              if counts.get('storageError', 0):
+                  raise SystemExit('Food storage maintenance failed')
+              if not result.get('hasMore') and not counts.get('waiting', 0) and not counts.get('retrying', 0):
+                  break
+              if time.monotonic() + 110 >= deadline:
+                  break
+              time.sleep(15)
+          PY
